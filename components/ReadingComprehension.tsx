@@ -3,14 +3,15 @@ import React, { useState, useCallback, useContext } from 'react';
 import { generateReadingQuiz, evaluateOpenAnswer } from '../services/geminiService';
 import type { ReadingQuizContent, ReadingHistoryItem } from '../types';
 import { useSound } from '../hooks/useSound';
-import { UserDataContext } from '../context/UserDataContext';
+import { UserDataContext, AddXpResult } from '../context/UserDataContext';
 import { XP_VALUES } from '../config/gamification';
 import { BookOpenIcon } from './icons/BookOpenIcon';
+import CompletionFeedback from './CompletionFeedback';
 
 type QuizState = 'selection' | 'loading' | 'active' | 'evaluating' | 'finished' | 'error';
 
-const randomTopics = ['The History of Coffee', 'The Wonders of the Deep Sea', 'The Rise of Artificial Intelligence', 'Sustainable Urban Living', 'The Secrets of Ancient Civilizations', 'The Future of Space Exploration'];
-const levels = ['Beginner (A2)', 'Intermediate (B1)', 'Advanced (C1)'];
+const randomTopics = ['The Psychology of Decision Making', 'The Impact of Globalization on Local Cultures', 'Breakthroughs in Renewable Energy', 'The Ethics of Artificial Intelligence', 'Historical Revisionism', 'The Future of Biotechnology'];
+const levels = ['共通テスト', '難関私大', '難関国公立', '早慶レベル'];
 
 const LoadingSpinner: React.FC<{text?: string}> = ({ text }) => (
     <div className="flex flex-col items-center justify-center gap-4">
@@ -30,16 +31,22 @@ const LevelCard: React.FC<{ level: string, onClick: () => void }> = ({ level, on
     </button>
 );
 
+interface ReadingComprehensionProps {
+    onLevelUp: (newLevel: number) => void;
+}
 
-const ReadingComprehension: React.FC = () => {
+const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }) => {
     const [quizState, setQuizState] = useState<QuizState>('selection');
     const [quizContent, setQuizContent] = useState<ReadingQuizContent | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [selectedLevel, setSelectedLevel] = useState<string>(levels[1]);
+    const [selectedLevel, setSelectedLevel] = useState<string>(levels[0]);
+    const [selectedTopic, setSelectedTopic] = useState<string>('');
 
     const [mcqAnswers, setMcqAnswers] = useState<(number | null)[]>([]);
-    const [openAnswer, setOpenAnswer] = useState('');
-    const [evaluationResult, setEvaluationResult] = useState<{ verdict: string; explanation: string; } | null>(null);
+    const [openAnswers, setOpenAnswers] = useState<string[]>([]);
+    const [evaluations, setEvaluations] = useState<({ verdict: string; explanation: string; } | null)[]>([]);
+    const [completionData, setCompletionData] = useState<AddXpResult | null>(null);
+
 
     const { addXpAndLog, addReadingHistory } = useContext(UserDataContext);
     const { playCorrect, playIncorrect, playSuccess } = useSound();
@@ -49,22 +56,25 @@ const ReadingComprehension: React.FC = () => {
         setError(null);
         setQuizContent(null);
         setMcqAnswers([]);
-        setOpenAnswer('');
-        setEvaluationResult(null);
+        setOpenAnswers([]);
+        setEvaluations([]);
+        setCompletionData(null);
         setSelectedLevel(level);
 
         try {
             const topic = randomTopics[Math.floor(Math.random() * randomTopics.length)];
+            setSelectedTopic(topic);
             const response = await generateReadingQuiz(topic, level);
             const jsonText = response.text;
             const data: ReadingQuizContent = JSON.parse(jsonText);
             
-            if (!data.passage || !data.mcqs || !data.openQuestion) {
+            if (!data.passage || !data.mcqs || !data.openQuestions) {
                 throw new Error("AI response is missing required fields.");
             }
 
             setQuizContent(data);
-            setMcqAnswers(Array(data.mcqs.length).fill(null)); // Dynamically set answers array
+            setMcqAnswers(Array(data.mcqs.length).fill(null));
+            setOpenAnswers(Array(data.openQuestions.length).fill(''));
             setQuizState('active');
         } catch (e) {
             console.error(e);
@@ -89,50 +99,64 @@ const ReadingComprehension: React.FC = () => {
         }
     };
 
+     const handleOpenAnswerChange = (qIndex: number, value: string) => {
+        setOpenAnswers(prev => {
+            const newAnswers = [...prev];
+            newAnswers[qIndex] = value;
+            return newAnswers;
+        });
+    };
+
     const handleSubmit = async () => {
         if (!quizContent) return;
         setQuizState('evaluating');
         setError(null);
         try {
-            const response = await evaluateOpenAnswer(quizContent.passage, quizContent.openQuestion.question, openAnswer);
-            const jsonText = response.text;
-            const result = JSON.parse(jsonText);
-            setEvaluationResult(result);
-            
+            const evaluationPromises = quizContent.openQuestions.map((oq, index) => 
+                evaluateOpenAnswer(quizContent.passage, oq.question, openAnswers[index])
+            );
+
+            const evaluationResponses = await Promise.all(evaluationPromises);
+            const parsedEvaluations = evaluationResponses.map(res => JSON.parse(res.text));
+            setEvaluations(parsedEvaluations);
+
             let mcqCorrectCount = 0;
             quizContent.mcqs.forEach((mcq, index) => {
                 if (mcq.correctAnswerIndex === mcqAnswers[index]) {
                     mcqCorrectCount++;
                 }
             });
-            const openAnswerCorrect = result.verdict.toLowerCase() === 'correct';
-            
-            let xpEarned = mcqCorrectCount * XP_VALUES.READING_MCQ_CORRECT;
-            if (openAnswerCorrect) {
-                xpEarned += XP_VALUES.READING_OPEN_CORRECT;
-            }
 
-            addXpAndLog({
+            const openAnswerCorrectCount = parsedEvaluations.filter(ev => ev && ev.verdict.toLowerCase() === 'correct').length;
+            
+            let xpToEarn = mcqCorrectCount * XP_VALUES.READING_MCQ_CORRECT + openAnswerCorrectCount * XP_VALUES.READING_OPEN_CORRECT;
+
+            const addXpResult = addXpAndLog({
                 type: 'reading',
-                xp: xpEarned,
+                xp: xpToEarn,
                 details: {
-                    topic: randomTopics[0], // Simplified for now
+                    topic: selectedTopic,
                     level: selectedLevel,
                     mcqScore: mcqCorrectCount,
                     mcqTotal: quizContent.mcqs.length,
-                    openAnswerCorrect,
+                    openCorrect: openAnswerCorrectCount,
+                    openTotal: quizContent.openQuestions.length,
                 }
             });
+            setCompletionData(addXpResult);
+            if (addXpResult.leveledUp) {
+                onLevelUp(addXpResult.newLevel);
+            }
             
             const historyItem: ReadingHistoryItem = {
                 id: Date.now().toString(),
                 date: new Date().toISOString(),
-                topic: randomTopics[0],
+                topic: selectedTopic,
                 level: selectedLevel,
                 content: quizContent,
                 userMcqAnswers: mcqAnswers,
-                userOpenAnswer: openAnswer,
-                evaluation: result,
+                userOpenAnswers: openAnswers,
+                evaluations: parsedEvaluations,
             };
             addReadingHistory(historyItem);
 
@@ -145,14 +169,15 @@ const ReadingComprehension: React.FC = () => {
         }
     };
     
-    const isMcqAnswered = (qIndex: number) => mcqAnswers[qIndex] !== null;
-
+    const allQuestionsAnswered = mcqAnswers.every(a => a !== null) && openAnswers.every(a => a.trim() !== '');
+    const isSubmittable = (quizContent?.openQuestions.length ?? 0) > 0 ? allQuestionsAnswered : mcqAnswers.every(a => a !== null);
+    
     if (quizState === 'selection') {
         return (
             <div className="animate-fade-in">
                 <h2 className="text-3xl font-bold text-center text-cyan-300 mb-2">長文読解</h2>
                 <p className="text-center text-slate-400 mb-8">挑戦したい難易度を選択してください。</p>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {levels.map(level => (
                         <LevelCard key={level} level={level} onClick={() => fetchQuiz(level)} />
                     ))}
@@ -164,6 +189,29 @@ const ReadingComprehension: React.FC = () => {
     if (quizState === 'loading') return <div className="h-full flex items-center justify-center"><LoadingSpinner text="AIがクイズを作成中です..." /></div>;
     if (quizState === 'error') return <div className="text-center text-red-400">{error} <button onClick={() => setQuizState('selection')} className="ml-2 px-4 py-2 bg-indigo-600 rounded">戻る</button></div>;
 
+    if (quizState === 'finished') {
+        return (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+                <div className="w-full max-w-2xl mx-auto p-8 bg-slate-700/50 rounded-lg flex flex-col items-center gap-4 animate-bounce-in">
+                     <h2 className="text-3xl font-bold text-cyan-400">クイズ完了！</h2>
+                     {completionData && (
+                        <CompletionFeedback
+                            xpEarned={completionData.xpEarned}
+                            unlockedBadges={completionData.unlockedBadges}
+                        />
+                    )}
+                    <div className="flex gap-4 mt-4">
+                        <button onClick={() => fetchQuiz(selectedLevel)} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-transform transform hover:scale-105">
+                           同じレベルで再挑戦
+                        </button>
+                         <button onClick={() => setQuizState('selection')} className="px-6 py-3 bg-slate-600 hover:bg-slate-700 text-white font-bold rounded-lg transition-transform transform hover:scale-105">
+                            レベル選択へ
+                        </button>
+                    </div>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-8">
@@ -179,62 +227,53 @@ const ReadingComprehension: React.FC = () => {
                         <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">{quizContent.passage}</p>
                     </article>
                     
-                    <section>
-                        <h3 className="text-xl font-semibold text-cyan-300 mb-4">選択問題</h3>
-                        <div className="space-y-6">
-                            {quizContent.mcqs.map((mcq, qIndex) => (
-                                <div key={qIndex}>
-                                    <p className="font-semibold mb-3 text-slate-200">{qIndex + 1}. {mcq.question}</p>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                        {mcq.options.map((option, aIndex) => {
-                                            const isSelected = mcqAnswers[qIndex] === aIndex;
-                                            const isCorrect = mcq.correctAnswerIndex === aIndex;
-                                            let buttonClass = 'bg-slate-700 hover:bg-slate-600';
-                                            if (isMcqAnswered(qIndex) || quizState === 'finished') {
-                                                if (isCorrect) buttonClass = 'bg-green-600/80 text-white';
-                                                else if (isSelected) buttonClass = 'bg-red-600/80 text-white';
-                                                else buttonClass = 'bg-slate-700/50 text-slate-400';
-                                            }
-                                            return (
-                                                <button key={aIndex} onClick={() => handleMcqAnswer(qIndex, aIndex)} disabled={isMcqAnswered(qIndex) || quizState === 'finished'} className={`p-3 rounded-lg text-left transition-colors duration-200 ${buttonClass}`}>
-                                                    {option}
-                                                </button>
-                                            );
-                                        })}
+                    {quizContent.mcqs.length > 0 && (
+                        <section>
+                            <h3 className="text-xl font-semibold text-cyan-300 mb-4">選択問題</h3>
+                            <div className="space-y-6">
+                                {quizContent.mcqs.map((mcq, qIndex) => (
+                                    <div key={qIndex}>
+                                        <p className="font-semibold mb-3 text-slate-200">{qIndex + 1}. {mcq.question}</p>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            {mcq.options.map((option, aIndex) => {
+                                                const isSelected = mcqAnswers[qIndex] === aIndex;
+                                                return (
+                                                    <button key={aIndex} onClick={() => handleMcqAnswer(qIndex, aIndex)} disabled={mcqAnswers[qIndex] !== null} className={`p-3 rounded-lg text-left transition-colors duration-200 ${isSelected ? 'bg-indigo-500 text-white' : 'bg-slate-700 hover:bg-slate-600'}`}>
+                                                        {option}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-                    </section>
-
-                    <section>
-                         <h3 className="text-xl font-semibold text-cyan-300 mb-4">記述問題</h3>
-                         <p className="font-semibold mb-3 text-slate-200">{quizContent.openQuestion.question}</p>
-                         <textarea
-                            value={openAnswer}
-                            onChange={(e) => setOpenAnswer(e.target.value)}
-                            rows={4}
-                            className="w-full p-3 bg-slate-700 rounded-md border border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-slate-700/50"
-                            placeholder="ここに回答を入力してください..."
-                            disabled={quizState === 'finished' || quizState === 'evaluating'}
-                         />
-                         {quizState !== 'finished' && (
-                             <button onClick={handleSubmit} disabled={!openAnswer || quizState === 'evaluating' || !mcqAnswers.every(a => a !== null)} className="mt-4 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed">
-                                 {quizState === 'evaluating' ? '評価中...' : '提出して終了'}
-                             </button>
-                         )}
-                    </section>
-                    
-                    {evaluationResult && quizState === 'finished' && (
-                        <section className="p-4 rounded-lg bg-slate-700/50 animate-fade-in">
-                            <h3 className="text-xl font-semibold mb-3 text-cyan-300">あなたの回答の評価</h3>
-                            <p className={`font-bold text-lg mb-2 ${
-                                evaluationResult.verdict.toLowerCase() === 'correct' ? 'text-green-400' :
-                                evaluationResult.verdict.toLowerCase() === 'incorrect' ? 'text-red-400' : 'text-yellow-400'
-                            }`}>{evaluationResult.verdict}</p>
-                            <p className="text-slate-300">{evaluationResult.explanation}</p>
+                                ))}
+                            </div>
                         </section>
                     )}
+
+                    {quizContent.openQuestions.length > 0 && (
+                         <section>
+                             <h3 className="text-xl font-semibold text-cyan-300 mb-4">記述問題</h3>
+                             <div className="space-y-6">
+                                {quizContent.openQuestions.map((oq, qIndex) => (
+                                    <div key={qIndex}>
+                                        <p className="font-semibold mb-3 text-slate-200">{qIndex + 1}. {oq.question}</p>
+                                        <textarea
+                                            value={openAnswers[qIndex]}
+                                            onChange={(e) => handleOpenAnswerChange(qIndex, e.target.value)}
+                                            rows={4}
+                                            className="w-full p-3 bg-slate-700 rounded-md border border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-slate-700/50"
+                                            placeholder="ここに回答を入力してください..."
+                                            disabled={quizState === 'evaluating'}
+                                        />
+                                    </div>
+                                ))}
+                             </div>
+                         </section>
+                    )}
+
+                    <button onClick={handleSubmit} disabled={!isSubmittable || quizState === 'evaluating'} className="mt-4 px-6 py-2 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed">
+                        {quizState === 'evaluating' ? '評価中...' : '提出して終了'}
+                    </button>
                 </div>
             )}
         </div>

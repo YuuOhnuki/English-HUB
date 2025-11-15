@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useContext } from 'react';
 import { getWritingFeedback } from '../services/geminiService';
-import { UserDataContext } from '../context/UserDataContext';
+import { UserDataContext, AddXpResult } from '../context/UserDataContext';
 import { XP_VALUES } from '../config/gamification';
+import CompletionFeedback from './CompletionFeedback';
 
 type WritingState = 'idle' | 'loading' | 'feedback' | 'error';
 
@@ -20,12 +21,17 @@ const LoadingSpinner = () => (
     </div>
 );
 
-const WritingPractice: React.FC = () => {
+interface WritingPracticeProps {
+    onLevelUp: (newLevel: number) => void;
+}
+
+const WritingPractice: React.FC<WritingPracticeProps> = ({ onLevelUp }) => {
     const [state, setState] = useState<WritingState>('idle');
     const [topic, setTopic] = useState(topics[0]);
     const [essay, setEssay] = useState('');
     const [feedback, setFeedback] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [completionData, setCompletionData] = useState<AddXpResult | null>(null);
     const { addXpAndLog } = useContext(UserDataContext);
     
     const selectNewTopic = () => {
@@ -33,6 +39,7 @@ const WritingPractice: React.FC = () => {
         setTopic(newTopic);
         setEssay('');
         setFeedback('');
+        setCompletionData(null);
         setState('idle');
     }
 
@@ -43,32 +50,38 @@ const WritingPractice: React.FC = () => {
         }
         setState('loading');
         setError(null);
+        setCompletionData(null);
         try {
             const response = await getWritingFeedback(topic, essay);
             setFeedback(response.text);
-            setState('feedback');
-            addXpAndLog({
+            
+            const result = addXpAndLog({
                 type: 'writing',
                 xp: XP_VALUES.WRITING_SUBMIT,
                 details: { topic, wordCount: essay.trim().split(/\s+/).length }
             });
+            setCompletionData(result);
+            if (result.leveledUp) {
+                onLevelUp(result.newLevel);
+            }
+
+            setState('feedback');
         } catch(e) {
             console.error(e);
             setError("申し訳ありません、フィードバックの取得中にエラーが発生しました。もう一度お試しください。");
             setState('error');
         }
-    }, [topic, essay, addXpAndLog]);
+    }, [topic, essay, addXpAndLog, onLevelUp]);
 
     const renderFeedback = () => {
       if(!feedback) return null;
-      // Improved markdown parsing
       const html = feedback
         .replace(/^### (.*$)/gim, '<h3 class="text-xl font-semibold text-cyan-300 mt-4 mb-2">$1</h3>')
         .replace(/^## (.*$)/gim, '<h2 class="text-2xl font-bold text-cyan-200 mt-6 mb-3">$1</h2>')
         .replace(/\*\*(.*?)\*\*/g, '<strong class="font-semibold text-indigo-300">$1</strong>')
         .replace(/^\* (.*$)/gim, '<li class="ml-5 list-disc">$1</li>')
         .replace(/\n/g, '<br />')
-        .replace(/<br \/>(<li)/g, '$1'); // Fix extra breaks before list items
+        .replace(/<br \/>(<li)/g, '$1'); 
 
       return (
         <div className="prose prose-invert prose-p:text-slate-300 prose-li:text-slate-300" dangerouslySetInnerHTML={{ __html: html }} />
@@ -108,8 +121,17 @@ const WritingPractice: React.FC = () => {
                     {state === 'loading' && <LoadingSpinner />}
                     {state === 'error' && <p className="text-red-400">{error}</p>}
                     {(state === 'idle' || (state==='error' && !feedback)) && <p className="text-slate-500">フィードバックはここに表示されます。</p>}
-                    {(state === 'feedback' || (state==='error' && feedback)) && (
+                    {state === 'feedback' && (
                         <div className="w-full h-full overflow-y-auto space-y-4">
+                            {completionData && (
+                                <div className="p-4 mb-4 bg-slate-800 rounded-lg">
+                                    <CompletionFeedback
+                                        xpEarned={completionData.xpEarned}
+                                        unlockedBadges={completionData.unlockedBadges}
+                                    />
+                                </div>
+                            )}
+                            <h2 className="text-2xl font-bold text-cyan-200">AIからのフィードバック</h2>
                             {renderFeedback()}
                         </div>
                     )}

@@ -1,7 +1,6 @@
-
 import React, { createContext, useReducer, useEffect, useCallback } from 'react';
-import type { UserData, ActivityLog, UserGoal, WordMemoryStatus, ReadingHistoryItem } from '../types';
-import { XP_PER_LEVEL, BADGES } from '../config/gamification';
+import type { UserData, ActivityLog, UserGoal, WordMemoryStatus, ReadingHistoryItem, DailyMission } from '../types';
+import { XP_PER_LEVEL, BADGES, XP_VALUES } from '../config/gamification';
 
 const isSameDay = (d1: Date, d2: Date) => {
     return d1.getFullYear() === d2.getFullYear() &&
@@ -14,6 +13,21 @@ const isYesterday = (d1: Date, d2: Date) => {
     yesterday.setDate(d1.getDate() - 1);
     return isSameDay(yesterday, d2);
 }
+
+const missionTemplates: Omit<DailyMission, 'progress' | 'completed'>[] = [
+    { type: 'vocab_correct', target: 10, description: '単語クイズで10問正解する' },
+    { type: 'earn_xp', target: 100, description: '合計100 XPを獲得する' },
+    { type: 'complete_reading', target: 1, description: '長文読解クイズを1つ完了する' },
+];
+
+const generateNewMission = (): DailyMission => {
+    const template = missionTemplates[Math.floor(Math.random() * missionTemplates.length)];
+    return {
+        ...template,
+        progress: 0,
+        completed: false,
+    };
+};
 
 const defaultUserData: UserData = {
   level: 1,
@@ -29,6 +43,8 @@ const defaultUserData: UserData = {
   },
   wordMemory: {},
   readingHistory: [],
+  dailyMission: generateNewMission(),
+  lastMissionDate: new Date().toISOString(),
 };
 
 const getInitialState = (): UserData => {
@@ -51,6 +67,31 @@ const getInitialState = (): UserData => {
             }
             data.lastLogin = now.toISOString();
         }
+
+        // Check daily mission
+        const lastMissionDate = data.lastMissionDate ? new Date(data.lastMissionDate) : new Date(0);
+        if (!isSameDay(lastMissionDate, now)) {
+            data.dailyMission = generateNewMission();
+            data.lastMissionDate = now.toISOString();
+        } else if (!data.dailyMission) { // Handle case where mission is null from old data
+            data.dailyMission = generateNewMission();
+            data.lastMissionDate = now.toISOString();
+        }
+        
+        // Data migration for reading history from single open question to multiple
+        if (data.readingHistory.length > 0 && data.readingHistory[0].content.openQuestion) {
+             data.readingHistory = data.readingHistory.map((item: any) => ({
+                ...item,
+                content: {
+                    ...item.content,
+                    openQuestions: item.content.openQuestion ? [item.content.openQuestion] : [],
+                },
+                userOpenAnswers: item.userOpenAnswer ? [item.userOpenAnswer] : [],
+                evaluations: item.evaluation ? [item.evaluation] : [],
+            }));
+        }
+
+
         return data;
     }
   } catch (error) {
@@ -59,10 +100,17 @@ const getInitialState = (): UserData => {
   return defaultUserData;
 };
 
+export interface AddXpResult {
+    xpEarned: number;
+    unlockedBadges: string[];
+    leveledUp: boolean;
+    newLevel: number;
+}
+
 
 type UserDataContextType = {
   userData: UserData;
-  addXpAndLog: (activity: Omit<ActivityLog, 'id' | 'date'>) => string[];
+  addXpAndLog: (activity: Omit<ActivityLog, 'id' | 'date'>) => AddXpResult;
   setGoal: (goal: UserGoal | null) => void;
   updatePreferences: (prefs: Partial<UserData['preferences']>) => void;
   updateWordMemory: (word: string, isCorrect: boolean) => void;
@@ -71,7 +119,7 @@ type UserDataContextType = {
 
 export const UserDataContext = createContext<UserDataContextType>({
   userData: defaultUserData,
-  addXpAndLog: () => [],
+  addXpAndLog: () => ({ xpEarned: 0, unlockedBadges: [], leveledUp: false, newLevel: 1 }),
   setGoal: () => {},
   updatePreferences: () => {},
   updateWordMemory: () => {},
@@ -201,30 +249,76 @@ export const UserDataProvider: React.FC<{children: React.ReactNode}> = ({ childr
         }
     }, [userData]);
     
-    const addXpAndLog = useCallback((activity: Omit<ActivityLog, 'id' | 'date'>): string[] => {
+    const addXpAndLog = useCallback((activity: Omit<ActivityLog, 'id' | 'date'>): AddXpResult => {
         const fullActivity: ActivityLog = {
             ...activity,
             id: Date.now().toString(),
             date: new Date().toISOString(),
         };
         
-        let stateAfterUpdate = userReducer(userData, { type: 'ADD_XP_AND_LOG', payload: fullActivity });
-        
-        const newlyUnlockedBadges = checkBadges(stateAfterUpdate);
+        const oldLevel = userData.level;
+        let updatedState = { ...userData };
+
+        // 1. Add XP from activity
+        let totalXpEarned = fullActivity.xp;
+        updatedState.xp += fullActivity.xp;
+        updatedState.logs = [...updatedState.logs, fullActivity];
+
+        // 2. Check and update daily mission
+        let mission = updatedState.dailyMission;
+
+        if (mission && !mission.completed) {
+            let progressIncrement = 0;
+            switch (mission.type) {
+                case 'earn_xp':
+                    progressIncrement = fullActivity.xp;
+                    break;
+                case 'vocab_correct':
+                    if (fullActivity.type === 'vocabulary' && fullActivity.details.score) {
+                        progressIncrement = fullActivity.details.score;
+                    }
+                    break;
+                case 'complete_reading':
+                    if (fullActivity.type === 'reading') {
+                        progressIncrement = 1;
+                    }
+                    break;
+            }
+            
+            if (progressIncrement > 0) {
+                const newProgress = mission.progress + progressIncrement;
+                mission = { ...mission, progress: newProgress };
+                
+                if (newProgress >= mission.target) {
+                    mission.completed = true;
+                    const bonusXp = XP_VALUES.DAILY_MISSION_COMPLETE;
+                    updatedState.xp += bonusXp;
+                    totalXpEarned += bonusXp;
+                }
+            }
+            updatedState.dailyMission = mission;
+        }
+
+        // 3. Update level based on final XP
+        const newLevel = Math.floor(updatedState.xp / XP_PER_LEVEL) + 1;
+        updatedState.level = newLevel;
+
+        // 4. Check for new badges
+        const newlyUnlockedBadges = checkBadges(updatedState);
         if (newlyUnlockedBadges.length > 0) {
             const newBadgeIds = BADGES.filter(b => newlyUnlockedBadges.includes(b.name)).map(b => b.id);
-            stateAfterUpdate = { ...stateAfterUpdate, badges: [...new Set([...stateAfterUpdate.badges, ...newBadgeIds])]};
+            updatedState.badges = [...new Set([...updatedState.badges, ...newBadgeIds])];
         }
 
-        dispatch({ type: 'SET_USER_DATA', payload: stateAfterUpdate });
+        // 5. Dispatch final state
+        dispatch({ type: 'SET_USER_DATA', payload: updatedState });
         
-        // TODO: Show a notification for unlocked badges
-        if (newlyUnlockedBadges.length > 0) {
-            console.log("Unlocked badges:", newlyUnlockedBadges);
-            // In a real app, you'd trigger a toast notification here.
-        }
-
-        return newlyUnlockedBadges;
+        return {
+            xpEarned: totalXpEarned,
+            unlockedBadges: newlyUnlockedBadges,
+            leveledUp: newLevel > oldLevel,
+            newLevel: newLevel,
+        };
 
     }, [userData]);
 

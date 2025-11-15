@@ -1,14 +1,25 @@
-import React, { useState, useContext, useCallback } from 'react';
+
+import React, { useState, useContext, useCallback, useMemo } from 'react';
 import { UserDataContext } from '../context/UserDataContext';
 import { generateLearningPlan } from '../services/geminiService';
-import type { LearningPlan as TLearningPlan } from '../types';
+import type { LearningPlan as TLearningPlan, UserGoal } from '../types';
 import { SparklesIcon } from './icons/SparklesIcon';
 import { BookOpenIcon } from './icons/BookOpenIcon';
 import { FeatherIcon } from './icons/FeatherIcon';
+import { XP_VALUES } from '../config/gamification';
 
 type PlanState = 'setup' | 'loading' | 'plan' | 'error';
-const proficiencyLevels = ['Beginner', 'Intermediate', 'Advanced'];
-const learningGoals = ['General English Improvement', 'Business English', 'TOEIC Preparation', 'Travel Conversation'];
+const proficiencyLevels: Record<string, string> = {
+    'Beginner': '初級',
+    'Intermediate': '中級',
+    'Advanced': '上級'
+};
+const learningGoals: Record<string, string> = {
+    'General English Improvement': '総合的な英語力向上',
+    'Business English': 'ビジネス英語',
+    'TOEIC Preparation': 'TOEIC対策',
+    'Travel Conversation': '旅行英会話'
+};
 
 const LoadingSpinner = () => (
     <div className="flex flex-col items-center justify-center gap-4">
@@ -51,14 +62,16 @@ const SuggestionCard: React.FC<{ suggestion: TLearningPlan['suggestions'][0], se
 };
 
 const LearningPlan: React.FC<{ setMode: (mode: any) => void }> = ({ setMode }) => {
-    const { userData, updatePreferences } = useContext(UserDataContext);
+    const { userData, updatePreferences, setGoal } = useContext(UserDataContext);
     const [planState, setPlanState] = useState<PlanState>('setup');
     const [plan, setPlan] = useState<TLearningPlan | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [goalSet, setGoalSet] = useState(false);
     
     const handleGeneratePlan = useCallback(async () => {
         setPlanState('loading');
         setError(null);
+        setGoalSet(false);
         try {
             const response = await generateLearningPlan(userData.preferences, userData.logs);
             const jsonText = response.text.replace(/```json|```/g, '').trim();
@@ -72,6 +85,29 @@ const LearningPlan: React.FC<{ setMode: (mode: any) => void }> = ({ setMode }) =
         }
     }, [userData.preferences, userData.logs]);
 
+    const recommendedXpGoal = useMemo(() => {
+        if (!plan) return 0;
+        return plan.suggestions.reduce((total, suggestion) => {
+            switch(suggestion.type) {
+                case 'vocabulary': return total + 10 * XP_VALUES.VOCAB_CORRECT; // Assume 1 session
+                case 'reading': return total + 2 * XP_VALUES.READING_MCQ_CORRECT + XP_VALUES.READING_OPEN_CORRECT; // Assume 1 quiz
+                case 'writing': return total + XP_VALUES.WRITING_SUBMIT;
+                default: return total;
+            }
+        }, 0);
+    }, [plan]);
+
+    const handleSetGoal = () => {
+        const newGoal: UserGoal = {
+            type: 'xp',
+            target: recommendedXpGoal,
+            timeframe: 'weekly',
+            startDate: new Date().toISOString()
+        };
+        setGoal(newGoal);
+        setGoalSet(true);
+    };
+
     if(planState === 'loading') return <div className="h-full flex items-center justify-center"><LoadingSpinner /></div>;
 
     if(planState === 'plan' && plan) {
@@ -80,6 +116,14 @@ const LearningPlan: React.FC<{ setMode: (mode: any) => void }> = ({ setMode }) =
                  <div className="text-center p-4 bg-slate-700/30 rounded-lg">
                     <h2 className="text-2xl font-bold text-cyan-300 mb-2">今週のフォーカス</h2>
                     <p className="text-slate-300 max-w-2xl mx-auto">{plan.week_focus}</p>
+                </div>
+                 <div className="text-center p-4 bg-slate-700/50 rounded-lg">
+                    <h3 className="text-xl font-bold text-cyan-300 mb-2">推奨ウィークリー目標</h3>
+                    <p className="text-3xl font-bold text-yellow-300">{recommendedXpGoal} XP</p>
+                    <p className="text-slate-400 text-sm mb-4">このプランを元にした推奨目標です。</p>
+                    <button onClick={handleSetGoal} disabled={goalSet} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors disabled:bg-slate-500 disabled:cursor-not-allowed">
+                        {goalSet ? '目標設定済み！' : 'この目標を設定する'}
+                    </button>
                 </div>
                 <div className="grid md:grid-cols-3 gap-4">
                     {plan.suggestions.map((s, i) => (
@@ -108,7 +152,7 @@ const LearningPlan: React.FC<{ setMode: (mode: any) => void }> = ({ setMode }) =
                         value={userData.preferences.level}
                         onChange={e => updatePreferences({ level: e.target.value })}
                         className="w-full p-3 bg-slate-700 rounded-md border border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                        {proficiencyLevels.map(l => <option key={l} value={l}>{l}</option>)}
+                        {Object.entries(proficiencyLevels).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
                     </select>
                 </div>
                  <div>
@@ -118,7 +162,7 @@ const LearningPlan: React.FC<{ setMode: (mode: any) => void }> = ({ setMode }) =
                         value={userData.preferences.learningGoal}
                         onChange={e => updatePreferences({ learningGoal: e.target.value })}
                         className="w-full p-3 bg-slate-700 rounded-md border border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                        {learningGoals.map(g => <option key={g} value={g}>{g}</option>)}
+                        {Object.entries(learningGoals).map(([key, value]) => <option key={key} value={key}>{value}</option>)}
                     </select>
                 </div>
             </div>

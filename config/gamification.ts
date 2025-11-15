@@ -7,6 +7,7 @@ export const XP_VALUES = {
   READING_MCQ_CORRECT: 20,
   READING_OPEN_CORRECT: 40,
   WRITING_SUBMIT: 75,
+  DAILY_MISSION_COMPLETE: 50,
 };
 
 export const BADGES: Badge[] = [

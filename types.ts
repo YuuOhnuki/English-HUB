@@ -18,7 +18,7 @@ export interface ReadingOpenQuestion {
 export interface ReadingQuizContent {
   passage: string;
   mcqs: ReadingMCQ[];
-  openQuestion: ReadingOpenQuestion;
+  openQuestions: ReadingOpenQuestion[];
 }
 
 // New Types for Progress Tracking and Gamification
@@ -57,8 +57,16 @@ export interface ReadingHistoryItem {
   level: string;
   content: ReadingQuizContent;
   userMcqAnswers: (number | null)[];
-  userOpenAnswer: string;
-  evaluation: { verdict: string; explanation: string; } | null;
+  userOpenAnswers: string[];
+  evaluations: ({ verdict: string; explanation: string; } | null)[];
+}
+
+export interface DailyMission {
+  type: 'vocab_correct' | 'earn_xp' | 'complete_reading';
+  target: number;
+  progress: number;
+  completed: boolean;
+  description: string;
 }
 
 export interface UserData {
@@ -75,6 +83,8 @@ export interface UserData {
   };
   wordMemory: Record<string, WordMemoryStatus>; // Tracks memory status for each vocab word
   readingHistory: ReadingHistoryItem[];
+  dailyMission: DailyMission | null;
+  lastMissionDate: string; // ISO string for mission generation
 }
 
 export interface LearningPlan {

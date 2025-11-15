@@ -1,36 +1,17 @@
-import React, { useState, useMemo, useCallback, useContext, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useContext } from 'react';
 import type { VocabQuestion } from '../types';
 import { useSound } from '../hooks/useSound';
 import { CheckIcon } from './icons/CheckIcon';
 import { XIcon } from './icons/XIcon';
-import { UserDataContext } from '../context/UserDataContext';
+import { UserDataContext, AddXpResult } from '../context/UserDataContext';
 import { XP_VALUES } from '../config/gamification';
 import { SparklesIcon } from './icons/SparklesIcon';
+import CompletionFeedback from './CompletionFeedback';
 
 // Helper to shuffle arrays
 const shuffleArray = <T,>(array: T[]): T[] => {
   return [...array].sort(() => Math.random() - 0.5);
 };
-
-const Confetti: React.FC = React.memo(() => {
-  const confettiCount = 70;
-  const colors = ['#a78bfa', '#7dd3fc', '#f472b6', '#facc15', '#4ade80']; // Indigo, Sky, Pink, Amber, Green
-
-  const confettiPieces = useMemo(() => {
-    return Array.from({ length: confettiCount }).map((_, i) => {
-      const style = {
-        left: `${Math.random() * 100}%`,
-        animationDelay: `${Math.random() * 4}s`,
-        animationDuration: `${2 + Math.random() * 3}s`,
-        backgroundColor: colors[Math.floor(Math.random() * colors.length)],
-        transform: `rotate3d(${Math.random() * 2 - 1}, ${Math.random() * 2 - 1}, 0, ${Math.random() * 360}deg)`,
-      };
-      return <div key={i} className="confetti" style={style} />;
-    });
-  }, []);
-
-  return <div className="absolute top-0 left-0 w-full h-full pointer-events-none">{confettiPieces}</div>;
-});
 
 const vocabList: Record<string, VocabQuestion[]> = {
   '英単語 - 基本': [
@@ -40,6 +21,15 @@ const vocabList: Record<string, VocabQuestion[]> = {
     { word: 'increase', correctAnswer: '増加する', options: ['増加する', '減少する', '維持する', '破壊する'] },
     { word: 'consider', correctAnswer: '考慮する', options: ['考慮する', '否定する', '忘れる', '発表する'] },
     { word: 'develop', correctAnswer: '開発する', options: ['開発する', '停止する', 'コピーする', '購入する'] },
+    { word: 'ability', correctAnswer: '能力', options: ['能力', '機会', '弱点', '性格'] },
+    { word: 'community', correctAnswer: '地域社会', options: ['地域社会', '会社', '政府', '家族'] },
+    { word: 'knowledge', correctAnswer: '知識', options: ['知識', '経験', '情報', '知恵'] },
+    { word: 'environment', correctAnswer: '環境', options: ['環境', '状況', '天候', '自然'] },
+    { word: 'necessary', correctAnswer: '必要な', options: ['必要な', '不要な', '高価な', '便利な'] },
+    { word: 'opportunity', correctAnswer: '機会', options: ['機会', '問題', '危険', '約束'] },
+    { word: 'purpose', correctAnswer: '目的', options: ['目的', '結果', '原因', '理由'] },
+    { word: 'relationship', correctAnswer: '関係', options: ['関係', '対立', '会話', '契約'] },
+    { word: 'technology', correctAnswer: '科学技術', options: ['科学技術', '芸術', '歴史', '文学'] },
   ],
   '英単語 - 標準': [
     { word: 'significant', correctAnswer: '重要な', options: ['重要な', '些細な', '退屈な', '危険な'] },
@@ -48,6 +38,15 @@ const vocabList: Record<string, VocabQuestion[]> = {
     { word: 'sufficient', correctAnswer: '十分な', options: ['十分な', '不十分な', '過剰な', '皆無な'] },
     { word: 'phenomenon', correctAnswer: '現象', options: ['現象', '理論', '事実', '空想'] },
     { word: 'sophisticated', correctAnswer: '洗練された', options: ['洗練された', '単純な', '粗野な', '時代遅れの'] },
+    { word: 'vulnerable', correctAnswer: '脆弱な', options: ['脆弱な', '強力な', '安全な', '不死身の'] },
+    { word: 'sustainable', correctAnswer: '持続可能な', options: ['持続可能な', '一時的な', '破壊的な', '非効率な'] },
+    { word: 'controversial', correctAnswer: '物議を醸す', options: ['物議を醸す', '受け入れられた', '明白な', '無関心な'] },
+    { word: 'comprehensive', correctAnswer: '包括的な', options: ['包括的な', '断片的な', '表面的な', '限定的な'] },
+    { word: 'legitimate', correctAnswer: '正当な', options: ['正当な', '不法な', '疑わしい', '架空の'] },
+    { word: 'simultaneously', correctAnswer: '同時に', options: ['同時に', '連続して', '交互に', '別々に'] },
+    { word: 'indispensable', correctAnswer: '不可欠な', options: ['不可欠な', '余分な', '交換可能な', '望ましい'] },
+    { word: 'facilitate', correctAnswer: '促進する', options: ['促進する', '妨害する', '複雑にする', '遅らせる'] },
+    { word: 'implement', correctAnswer: '実行する', options: ['実行する', '計画する', '提案する', '中止する'] },
   ],
    '英単語 - 難関': [
     { word: 'ubiquitous', correctAnswer: '遍在する', options: ['遍在する', '珍しい', '見えない', '局所的な'] },
@@ -56,24 +55,48 @@ const vocabList: Record<string, VocabQuestion[]> = {
     { word: 'empirical', correctAnswer: '経験的な', options: ['経験的な', '理論的な', '直感的な', '架空の'] },
     { word: 'mitigate', correctAnswer: '和らげる', options: ['和らげる', '悪化させる', '引き起こす', '無視する'] },
     { word: 'proliferate', correctAnswer: '増殖する', options: ['増殖する', '減少する', '消滅する', '変化する'] },
+    { word: 'ephemeral', correctAnswer: 'つかの間の', options: ['つかの間の', '永遠の', '重要な', '予測可能な'] },
+    { word: 'acquiesce', correctAnswer: '黙認する', options: ['黙認する', '反対する', '交渉する', '拒否する'] },
+    { word: 'conundrum', correctAnswer: '難問', options: ['難問', '解決策', '簡単な質問', '明確な答え'] },
+    { word: 'exacerbate', correctAnswer: '悪化させる', options: ['悪化させる', '改善する', '軽減する', '安定させる'] },
+    { word: 'idiosyncrasy', correctAnswer: '特異性', options: ['特異性', '共通性', '正常性', '類似性'] },
+    { word: 'juxtaposition', correctAnswer: '並置', options: ['並置', '分離', '融合', '対立'] },
+    { word: 'ostracize', correctAnswer: '追放する', options: ['追放する', '歓迎する', '称賛する', '無視する'] },
+    { word: 'quintessential', correctAnswer: '典型的な', options: ['典型的な', '非典型的な', '例外的な', 'ユニークな'] },
+    { word: 'vociferous', correctAnswer: '大声で叫ぶ', options: ['大声で叫ぶ', '静かな', '内気な', '穏やかな'] },
   ],
   '英熟語 - 基本': [
     { word: 'look forward to', correctAnswer: '〜を楽しみに待つ', options: ['〜を楽しみに待つ', '〜を調べる', '〜の世話をする', '〜を軽蔑する'] },
     { word: 'get up', correctAnswer: '起きる', options: ['起きる', '諦める', '乗る', '降りる'] },
     { word: 'take care of', correctAnswer: '〜の世話をする', options: ['〜の世話をする', '〜を延期する', '〜に参加する', '〜に頼る'] },
     { word: 'give up', correctAnswer: '諦める', options: ['諦める', '続ける', '始める', '見つける'] },
+    { word: 'depend on', correctAnswer: '〜に頼る', options: ['〜に頼る', '〜を断る', '〜を疑う', '〜を避ける'] },
+    { word: 'run out of', correctAnswer: '〜を使い果たす', options: ['〜を使い果たす', '〜で満たす', '〜を見つける', '〜を保存する'] },
+    { word: 'show up', correctAnswer: '現れる', options: ['現れる', '隠れる', '去る', '消える'] },
+    { word: 'turn on', correctAnswer: '（電気などを）つける', options: ['（電気などを）つける', '消す', '修理する', '壊す'] },
+    { word: 'turn off', correctAnswer: '（電気などを）消す', options: ['（電気などを）消す', 'つける', '交換する', '充電する'] },
   ],
   '英熟語 - 標準': [
     { word: 'figure out', correctAnswer: '〜を理解する', options: ['〜を理解する', '〜を実行する', '〜を延期する', '〜に追いつく'] },
     { word: 'carry out', correctAnswer: '〜を実行する', options: ['〜を実行する', '〜を中止する', '〜を自慢する', '〜を我慢する'] },
     { word: 'put off', correctAnswer: '〜を延期する', options: ['〜を延期する', '〜を我慢する', '〜を消す', '〜を着用する'] },
     { word: 'catch up with', correctAnswer: '〜に追いつく', options: ['〜に追いつく', '〜を思いつく', '〜を罰せられずに済ます', '〜とうまくやっていく'] },
+    { word: 'deal with', correctAnswer: '〜に対処する', options: ['〜に対処する', '〜を無視する', '〜を避ける', '〜と協力する'] },
+    { word: 'end up', correctAnswer: '結局〜になる', options: ['結局〜になる', '〜を始める', '〜を計画する', '〜を避ける'] },
+    { word: 'go through', correctAnswer: '〜を経験する', options: ['〜を経験する', '〜を避ける', '〜を忘れる', '〜を調べる'] },
+    { word: 'keep up with', correctAnswer: '〜に遅れずについていく', options: ['〜に遅れずについていく', '〜から遅れる', '〜を追い越す', '〜と競争する'] },
+    { word: 'point out', correctAnswer: '〜を指摘する', options: ['〜を指摘する', '〜を隠す', '〜を賞賛する', '〜を無視する'] },
   ],
   '英熟語 - 難関': [
     { word: 'come up with', correctAnswer: '〜を思いつく', options: ['〜を思いつく', '〜に屈する', '〜を廃止する', '〜を補う'] },
     { word: 'get away with', correctAnswer: '〜を罰せられずに済ます', options: ['〜を罰せられずに済ます', '〜とうまくやっていく', '〜に取り掛かる', '〜を切り抜ける'] },
     { word: 'look down on', correctAnswer: '〜を軽蔑する', options: ['〜を軽蔑する', '〜を尊敬する', '〜を調査する', '〜の面倒を見る'] },
     { word: 'make up for', correctAnswer: '〜を補う', options: ['〜を補う', '〜をでっちあげる', '〜と仲直りする', '〜を構成する'] },
+    { word: 'abide by', correctAnswer: '〜に従う', options: ['〜に従う', '〜に反抗する', '〜を無視する', '〜を交渉する'] },
+    { word: 'brush up on', correctAnswer: '〜をやり直す', options: ['〜をやり直す', '〜を忘れる', '〜を新しく始める', '〜を教える'] },
+    { word: 'fall back on', correctAnswer: '〜を当てにする', options: ['〜を当てにする', '〜を裏切る', '〜を拒絶する', '〜を疑う'] },
+    { word: 'get around to', correctAnswer: '〜をする余裕ができる', options: ['〜をする余裕ができる', '〜を延期する', '〜を避ける', '〜を強制される'] },
+    { word: 'iron out', correctAnswer: '〜を解決する', options: ['〜を解決する', '〜を複雑にする', '〜問題を作り出す', '〜を調査する'] },
   ]
 };
 
@@ -89,7 +112,12 @@ const CategoryCard: React.FC<{ title: string; onClick: () => void; }> = ({ title
     </button>
 );
 
-const VocabularyQuiz: React.FC<{ setMode: (mode: 'vocabulary' | 'reading' | 'writing' | 'plan' | 'profile') => void }> = ({ setMode }) => {
+interface VocabularyQuizProps {
+  setMode: (mode: 'vocabulary' | 'reading' | 'writing' | 'profile') => void;
+  onLevelUp: (newLevel: number) => void;
+}
+
+const VocabularyQuiz: React.FC<VocabularyQuizProps> = ({ setMode, onLevelUp }) => {
   const [view, setView] = useState<'selection' | 'quiz'>('selection');
   const [category, setCategory] = useState<string | null>(null);
   const [quizQueue, setQuizQueue] = useState<VocabQuestion[]>([]);
@@ -99,6 +127,8 @@ const VocabularyQuiz: React.FC<{ setMode: (mode: 'vocabulary' | 'reading' | 'wri
   const [sessionCorrectAnswers, setSessionCorrectAnswers] = useState(0);
   const [isQuizFinished, setIsQuizFinished] = useState(false);
   const [sessionType, setSessionType] = useState<'learning' | 'review'>('learning');
+  const [completionData, setCompletionData] = useState<AddXpResult | null>(null);
+
 
   const { userData, addXpAndLog, updateWordMemory } = useContext(UserDataContext);
   const { playCorrect, playIncorrect, playSuccess } = useSound();
@@ -150,6 +180,7 @@ const VocabularyQuiz: React.FC<{ setMode: (mode: 'vocabulary' | 'reading' | 'wri
     setIsAnswered(false);
     setSessionCorrectAnswers(0);
     setIsQuizFinished(false);
+    setCompletionData(null);
     setView('quiz');
   }
   
@@ -178,15 +209,22 @@ const VocabularyQuiz: React.FC<{ setMode: (mode: 'vocabulary' | 'reading' | 'wri
     if (!category) return;
     const xpEarned = sessionCorrectAnswers * XP_VALUES.VOCAB_CORRECT;
     if (xpEarned > 0) {
-        addXpAndLog({
+        const result = addXpAndLog({
             type: 'vocabulary',
             xp: xpEarned,
             details: { category, score: sessionCorrectAnswers, total: quizQueue.length }
         });
+        setCompletionData(result);
+        if (result.leveledUp) {
+            onLevelUp(result.newLevel);
+        }
+    } else {
+         const result = addXpAndLog({ type: 'vocabulary', xp: 0, details: { category, score: 0, total: quizQueue.length } });
+         setCompletionData(result);
     }
     playSuccess();
     setIsQuizFinished(true);
-  }, [sessionCorrectAnswers, addXpAndLog, category, quizQueue.length, playSuccess]);
+  }, [sessionCorrectAnswers, addXpAndLog, category, quizQueue.length, playSuccess, onLevelUp]);
 
   const handleNext = () => {
     if (currentQuestionIndex < quizQueue.length - 1) {
@@ -220,15 +258,17 @@ const VocabularyQuiz: React.FC<{ setMode: (mode: 'vocabulary' | 'reading' | 'wri
     <div className="flex flex-col items-center justify-center h-full text-center">
        <div className="w-full max-w-2xl mx-auto">
         {isQuizFinished ? (
-            <div className="relative overflow-hidden p-8 bg-slate-700/50 rounded-lg flex flex-col items-center gap-4 animate-bounce-in">
-                <Confetti />
-                <span className="text-5xl mb-2 z-10">🎉</span>
-                <h2 className="text-3xl font-bold text-cyan-400 z-10">
+            <div className="p-8 bg-slate-700/50 rounded-lg flex flex-col items-center gap-4 animate-bounce-in">
+                <h2 className="text-3xl font-bold text-cyan-400">
                     {sessionType === 'learning' ? '学習セッション完了！' : '復習完了！'}
                 </h2>
-                <p className="text-xl text-slate-300 z-10">スコア: <span className="font-bold text-white">{sessionCorrectAnswers}</span> / {quizQueue.length}</p>
-                 {sessionCorrectAnswers === quizQueue.length && <p className="text-lg text-green-400 font-semibold z-10">パーフェクト！</p>}
-                 <p className="text-slate-400 mt-2 z-10">{sessionType === 'learning' && category ? `「${category}」の学習中の単語を全て終えました。` : '全ての単語を復習しました。'}</p>
+                <p className="text-xl text-slate-300">スコア: <span className="font-bold text-white">{sessionCorrectAnswers}</span> / {quizQueue.length}</p>
+                 {completionData && (
+                    <CompletionFeedback
+                        xpEarned={completionData.xpEarned}
+                        unlockedBadges={completionData.unlockedBadges}
+                    />
+                )}
                 <div className="flex gap-4 mt-4 z-10">
                     <button onClick={() => category && startQuiz(category)} className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-transform transform hover:scale-105">
                         もう一度プレイ
