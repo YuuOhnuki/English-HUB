@@ -1,0 +1,297 @@
+
+import React, { useContext, useMemo, useState } from 'react';
+import { UserDataContext } from '../context/UserDataContext';
+import { XP_PER_LEVEL, BADGES } from '../config/gamification';
+import type { UserGoal, ReadingHistoryItem } from '../types';
+import { AllVocabWords } from './VocabularyQuiz'; // Import the flat list
+
+const StatCard: React.FC<{ label: string; value: string | number; icon: string; }> = ({ label, value, icon }) => (
+    <div className="bg-slate-700/50 p-4 rounded-lg text-center">
+        <div className="text-3xl mb-2">{icon}</div>
+        <div className="text-2xl font-bold text-white">{value}</div>
+        <div className="text-sm text-slate-400">{label}</div>
+    </div>
+);
+
+const BadgeDisplay: React.FC<{ earnedBadges: string[] }> = ({ earnedBadges }) => (
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4">
+        {BADGES.map(badge => {
+            const isEarned = earnedBadges.includes(badge.id);
+            return (
+                <div key={badge.id} className={`p-3 rounded-lg flex flex-col items-center gap-2 text-center transition-opacity ${isEarned ? 'bg-indigo-900/50 opacity-100' : 'bg-slate-700/50 opacity-50'}`} title={isEarned ? badge.description : `ロック中: ${badge.description}`}>
+                    <div className="text-4xl">{badge.icon}</div>
+                    <div className="text-xs font-semibold text-white">{badge.name}</div>
+                </div>
+            );
+        })}
+    </div>
+);
+
+const ActivityCalendar: React.FC<{ logs: { date: string }[] }> = ({ logs }) => {
+    const activityByDay = useMemo(() => {
+        const map = new Map<string, number>();
+        logs.forEach(log => {
+            const date = new Date(log.date).toISOString().split('T')[0];
+            map.set(date, (map.get(date) || 0) + 1);
+        });
+        return map;
+    }, [logs]);
+
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(endDate.getDate() - 34); // Approx 5 weeks
+
+    const days = [];
+    let day = new Date(startDate);
+    while (day <= endDate) {
+        days.push(new Date(day));
+        day.setDate(day.getDate() + 1);
+    }
+    
+    return (
+        <div className="flex flex-wrap gap-1.5 justify-center">
+            {days.map(d => {
+                const dateString = d.toISOString().split('T')[0];
+                const count = activityByDay.get(dateString) || 0;
+                let bgColor = 'bg-slate-700';
+                if (count > 0) bgColor = 'bg-green-800';
+                if (count > 2) bgColor = 'bg-green-600';
+                if (count > 5) bgColor = 'bg-green-400';
+
+                return <div key={dateString} className={`w-4 h-4 rounded-sm ${bgColor}`} title={`${dateString}: ${count} アクティビティ`} />;
+            })}
+        </div>
+    );
+};
+
+const VocabNotebook: React.FC = () => {
+    const { userData } = useContext(UserDataContext);
+    const [filter, setFilter] = useState<'all' | 'learning' | 'mastered'>('all');
+
+    const filteredWords = useMemo(() => {
+        return AllVocabWords.filter(vocab => {
+            if (filter === 'all') return true;
+            const status = userData.wordMemory[vocab.word]?.status;
+            if (filter === 'learning') return status !== 'mastered';
+            if (filter === 'mastered') return status === 'mastered';
+            return false;
+        }).sort((a, b) => a.word.localeCompare(b.word));
+    }, [filter, userData.wordMemory]);
+    
+    const getStatusLabel = (word: string) => {
+        const status = userData.wordMemory[word]?.status;
+        if (status === 'mastered') {
+            return <span className="text-xs font-semibold text-green-400 bg-green-900/50 px-2 py-1 rounded-full">習得済み</span>;
+        }
+        return <span className="text-xs font-semibold text-yellow-400 bg-yellow-900/50 px-2 py-1 rounded-full">学習中</span>;
+    }
+
+    return (
+        <div className="space-y-4">
+            <div className="flex justify-center gap-2 p-1 bg-slate-700/50 rounded-lg">
+                <button onClick={() => setFilter('all')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-colors ${filter === 'all' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-600'}`}>すべて</button>
+                <button onClick={() => setFilter('learning')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-colors ${filter === 'learning' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-600'}`}>学習中</button>
+                <button onClick={() => setFilter('mastered')} className={`flex-1 py-2 text-sm font-semibold rounded-md transition-colors ${filter === 'mastered' ? 'bg-indigo-600 text-white' : 'hover:bg-slate-600'}`}>習得済み</button>
+            </div>
+            <div className="max-h-[400px] overflow-y-auto space-y-2 pr-2">
+                {filteredWords.length > 0 ? filteredWords.map(vocab => (
+                    <div key={vocab.word} className="flex justify-between items-center p-3 bg-slate-800 rounded-md">
+                        <div>
+                            <p className="font-bold text-slate-100">{vocab.word}</p>
+                            <p className="text-sm text-slate-400">{vocab.correctAnswer}</p>
+                        </div>
+                        {getStatusLabel(vocab.word)}
+                    </div>
+                )) : <p className="text-center text-slate-400 py-4">このカテゴリの単語はありません。</p>}
+            </div>
+        </div>
+    )
+}
+
+const ReadingHistory: React.FC = () => {
+    const { userData } = useContext(UserDataContext);
+    const { readingHistory } = userData;
+    const [selectedItem, setSelectedItem] = useState<ReadingHistoryItem | null>(null);
+
+    if (selectedItem) {
+        const { content, userMcqAnswers, userOpenAnswer, evaluation } = selectedItem;
+        return (
+            <div className="space-y-6 animate-fade-in">
+                <button onClick={() => setSelectedItem(null)} className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white font-bold rounded-lg">&larr; 履歴一覧に戻る</button>
+                <article>
+                    <h2 className="text-2xl font-bold text-cyan-300 mb-4">{selectedItem.topic} ({selectedItem.level})</h2>
+                    <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">{content.passage}</p>
+                </article>
+                <section>
+                    <h3 className="text-xl font-semibold text-cyan-300 mb-4">あなたの回答</h3>
+                    <div className="space-y-6">
+                        {content.mcqs.map((mcq, qIndex) => {
+                            const userAnswerIndex = userMcqAnswers[qIndex];
+                            const isCorrect = mcq.correctAnswerIndex === userAnswerIndex;
+                            return (
+                                <div key={qIndex} className="p-3 bg-slate-800 rounded-lg">
+                                    <p className="font-semibold mb-2 text-slate-200">{qIndex + 1}. {mcq.question}</p>
+                                    <p className={`border-l-4 pl-3 ${isCorrect ? 'border-green-500' : 'border-red-500'}`}>
+                                        あなたの回答: <span className="font-medium">{userAnswerIndex !== null ? mcq.options[userAnswerIndex] : '未回答'}</span>
+                                    </p>
+                                    {!isCorrect && <p className="border-l-4 border-cyan-500 pl-3 mt-1">正解: <span className="font-medium">{mcq.options[mcq.correctAnswerIndex]}</span></p>}
+                                </div>
+                            )
+                        })}
+                    </div>
+                </section>
+                <section>
+                     <h3 className="text-xl font-semibold text-cyan-300 mb-2">記述問題</h3>
+                     <div className="p-3 bg-slate-800 rounded-lg">
+                        <p className="font-semibold mb-2 text-slate-200">{content.openQuestion.question}</p>
+                        <p className="text-slate-300 italic mb-2">あなたの回答: "{userOpenAnswer}"</p>
+                        {evaluation && (
+                             <div className="mt-2 pt-2 border-t border-slate-700">
+                                <p className={`font-bold text-lg ${evaluation.verdict.toLowerCase() === 'correct' ? 'text-green-400' : 'text-yellow-400'}`}>{evaluation.verdict}</p>
+                                <p className="text-slate-400 text-sm">{evaluation.explanation}</p>
+                            </div>
+                        )}
+                    </div>
+                </section>
+            </div>
+        )
+    }
+
+    return (
+         <div className="space-y-3 max-h-[460px] overflow-y-auto pr-2">
+            {readingHistory.length > 0 ? readingHistory.map(item => (
+                <button key={item.id} onClick={() => setSelectedItem(item)} className="w-full text-left p-4 bg-slate-800 rounded-lg hover:bg-slate-700/50 transition-colors">
+                    <p className="font-bold text-slate-200">{item.topic} <span className="text-sm font-normal text-slate-400">({item.level})</span></p>
+                    <p className="text-xs text-slate-500">{new Date(item.date).toLocaleString('ja-JP')}</p>
+                </button>
+            )) : <p className="text-center text-slate-400 py-8">まだ完了した読解クイズはありません。</p>}
+        </div>
+    )
+}
+
+const Profile: React.FC = () => {
+    const { userData, setGoal } = useContext(UserDataContext);
+    const { level, xp, logs, badges, goal } = userData;
+    const [tab, setTab] = useState<'stats' | 'notebook' | 'history' | 'badges'>('stats');
+
+    const xpForCurrentLevel = xp % XP_PER_LEVEL;
+    const progressPercent = (xpForCurrentLevel / XP_PER_LEVEL) * 100;
+
+    const stats = useMemo(() => {
+        const vocabLogs = logs.filter(l => l.type === 'vocabulary');
+        const totalCorrectAnswers = Object.values(userData.wordMemory).filter(w => w.status === 'mastered').length;
+        
+        const readingLogs = logs.filter(l => l.type === 'reading');
+        const mcqCorrect = readingLogs.reduce((sum, log) => sum + (log.details.mcqScore || 0), 0);
+        const mcqTotal = readingLogs.reduce((sum, log) => sum + (log.details.mcqTotal || 0), 0);
+        
+        const writingLogs = logs.filter(l => l.type === 'writing');
+        
+        const accuracy = mcqTotal > 0 ? ((mcqCorrect / mcqTotal) * 100).toFixed(1) + '%' : 'N/A';
+        
+        return {
+            wordsMastered: totalCorrectAnswers,
+            quizzesCompleted: vocabLogs.length + readingLogs.length,
+            essaysReviewed: writingLogs.length,
+            accuracy,
+        }
+    }, [logs, userData.wordMemory]);
+    
+    const handleSetGoal = () => {
+        const newGoal: UserGoal = {
+            type: 'xp',
+            target: userData.xp + 2000,
+            timeframe: 'weekly',
+            startDate: new Date().toISOString()
+        };
+        setGoal(newGoal);
+    }
+    
+    const goalProgress = useMemo(() => {
+        if (!goal) return null;
+        const startXp = goal.target - 2000;
+        const currentProgress = userData.xp - startXp;
+        const targetProgress = goal.target - startXp;
+        return (currentProgress / targetProgress) * 100;
+    }, [goal, userData.xp]);
+
+    return (
+        <div className="space-y-8 animate-fade-in">
+            <div className="flex flex-col sm:flex-row items-center gap-6 p-6 bg-slate-700/30 rounded-lg">
+                <div className="text-6xl font-bold bg-gradient-to-tr from-indigo-500 to-cyan-400 text-transparent bg-clip-text h-24 w-24 flex items-center justify-center border-4 border-indigo-500/50 rounded-full">
+                    {level}
+                </div>
+                <div className="w-full">
+                    <div className="flex justify-between items-baseline mb-1">
+                        <h2 className="text-xl font-bold text-white">レベル {level}</h2>
+                        <p className="text-sm text-slate-400">{xpForCurrentLevel} / {XP_PER_LEVEL} XP</p>
+                    </div>
+                    <div className="w-full bg-slate-700 rounded-full h-4">
+                        <div className="bg-indigo-500 h-4 rounded-full transition-all duration-500" style={{ width: `${progressPercent}%` }}></div>
+                    </div>
+                </div>
+            </div>
+            
+             <div className="flex justify-center border-b border-slate-700">
+                <button onClick={() => setTab('stats')} className={`px-4 py-2 text-md font-semibold ${tab === 'stats' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400'}`}>統計</button>
+                <button onClick={() => setTab('notebook')} className={`px-4 py-2 text-md font-semibold ${tab === 'notebook' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400'}`}>単語帳</button>
+                <button onClick={() => setTab('history')} className={`px-4 py-2 text-md font-semibold ${tab === 'history' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400'}`}>読解履歴</button>
+                <button onClick={() => setTab('badges')} className={`px-4 py-2 text-md font-semibold ${tab === 'badges' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-slate-400'}`}>バッジ</button>
+            </div>
+
+            {tab === 'stats' && (
+                <div className="space-y-8 animate-fade-in">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <StatCard label="習得した単語" value={stats.wordsMastered} icon="📚" />
+                        <StatCard label="完了したクイズ" value={stats.quizzesCompleted} icon="🧠" />
+                        <StatCard label="添削済みの作文" value={stats.essaysReviewed} icon="✍️" />
+                        <StatCard label="クイズ正答率" value={stats.accuracy} icon="🎯" />
+                    </div>
+                    
+                    <div className="p-4 bg-slate-700/30 rounded-lg">
+                        <h3 className="text-lg font-semibold text-center text-cyan-300 mb-4">週の目標</h3>
+                        {!goal ? (
+                            <div className="text-center">
+                                <p className="text-slate-400 mb-4">今週の目標が設定されていません。</p>
+                                <button onClick={handleSetGoal} className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg">目標を設定</button>
+                            </div>
+                        ) : (
+                            <div>
+                                <p className="text-center text-slate-300 mb-2">目標達成まであと {Math.max(0, goal.target - userData.xp)} XP！</p>
+                                <div className="w-full bg-slate-700 rounded-full h-3">
+                                    <div className="bg-green-500 h-3 rounded-full" style={{ width: `${goalProgress}%` }}></div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="p-4 bg-slate-700/30 rounded-lg">
+                        <h3 className="text-lg font-semibold text-center text-cyan-300 mb-4">アクティビティ</h3>
+                        <ActivityCalendar logs={logs} />
+                    </div>
+                </div>
+            )}
+
+            {tab === 'notebook' && (
+                 <div className="animate-fade-in">
+                    <VocabNotebook />
+                 </div>
+            )}
+
+            {tab === 'history' && (
+                 <div className="animate-fade-in">
+                    <ReadingHistory />
+                 </div>
+            )}
+            
+            {tab === 'badges' && (
+                 <div className="animate-fade-in">
+                    <BadgeDisplay earnedBadges={badges} />
+                 </div>
+            )}
+            
+        </div>
+    );
+};
+
+export default Profile;

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gemini English Learning Hub</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.29.1",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+  }
+}
+</script>
+<style>
+@keyframes bounce-in {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  80% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+.animate-bounce-in {
+  animation: bounce-in 0.6s ease-out;
+}
+
+.confetti {
+    position: absolute;
+    width: 8px;
+    height: 16px;
+    top: -20px;
+    opacity: 0;
+    animation-name: confetti-fall;
+    animation-timing-function: linear;
+    animation-iteration-count: 1;
+}
+
+@keyframes confetti-fall {
+    0% {
+        transform: translateY(0px) rotateZ(0deg) rotateY(0deg);
+        opacity: 1;
+    }
+    100% {
+        transform: translateY(400px) rotateZ(540deg) rotateY(360deg);
+        opacity: 0;
+    }
+}
+</style>
+</head>
+  <body class="bg-slate-900 text-white">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
