@@ -1,6 +1,5 @@
-
 import { GoogleGenAI, GenerateContentResponse, Type } from "@google/genai";
-import type { UserData, ReadingQuizContent } from '../types';
+import type { UserData, ReadingQuizContent, VocabQuestion } from '../types';
 
 const API_KEY = process.env.API_KEY;
 
@@ -212,3 +211,30 @@ export const generateLearningPlan = async (preferences: UserData['preferences'],
 
   return response;
 };
+
+export const generateDistractors = async (words: {word: string, correctAnswer: string}[]): Promise<GenerateContentResponse> => {
+    const prompt = `
+    日本の英語学習者向けの単語クイズを作成しています。
+    以下の英単語リストについて、正解の日本語訳に意味的に似ているが間違っている、巧妙な選択肢（ダミー選択肢）を3つずつ生成してください。
+    
+    入力単語リスト: ${JSON.stringify(words)}
+    
+    出力は以下のJSON形式に厳密に従ってください。
+    {
+      "words": [
+        {
+          "word": "英単語",
+          "distractors": ["ダミー選択肢1", "ダミー選択肢2", "ダミー選択肢3"]
+        }
+      ]
+    }
+    `;
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: prompt,
+        config: {
+            responseMimeType: 'application/json'
+        }
+    });
+    return response;
+}

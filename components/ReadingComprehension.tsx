@@ -1,4 +1,3 @@
-
 import React, { useState, useCallback, useContext } from 'react';
 import { generateReadingQuiz, evaluateOpenAnswer } from '../services/geminiService';
 import type { ReadingQuizContent, ReadingHistoryItem } from '../types';
@@ -7,8 +6,11 @@ import { UserDataContext, AddXpResult } from '../context/UserDataContext';
 import { XP_VALUES } from '../config/gamification';
 import { BookOpenIcon } from './icons/BookOpenIcon';
 import CompletionFeedback from './CompletionFeedback';
+import { CheckIcon } from './icons/CheckIcon';
+import { XIcon } from './icons/XIcon';
 
-type QuizState = 'selection' | 'loading' | 'active' | 'evaluating' | 'finished' | 'error';
+
+type QuizState = 'selection' | 'loading' | 'active' | 'evaluating' | 'results' | 'finished' | 'error';
 
 const randomTopics = ['The Psychology of Decision Making', 'The Impact of Globalization on Local Cultures', 'Breakthroughs in Renewable Energy', 'The Ethics of Artificial Intelligence', 'Historical Revisionism', 'The Future of Biotechnology'];
 const levels = ['共通テスト', '難関私大', '難関国公立', '早慶レベル'];
@@ -45,6 +47,7 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
     const [mcqAnswers, setMcqAnswers] = useState<(number | null)[]>([]);
     const [openAnswers, setOpenAnswers] = useState<string[]>([]);
     const [evaluations, setEvaluations] = useState<({ verdict: string; explanation: string; } | null)[]>([]);
+    const [score, setScore] = useState<{ mcqCorrect: number; openCorrect: number; } | null>(null);
     const [completionData, setCompletionData] = useState<AddXpResult | null>(null);
 
 
@@ -58,6 +61,7 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
         setMcqAnswers([]);
         setOpenAnswers([]);
         setEvaluations([]);
+        setScore(null);
         setCompletionData(null);
         setSelectedLevel(level);
 
@@ -85,6 +89,8 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
 
     const handleMcqAnswer = (qIndex: number, aIndex: number) => {
         if (quizState !== 'active') return;
+        
+        // Allow changing answer
         setMcqAnswers(prev => {
             const newAnswers = [...prev];
             newAnswers[qIndex] = aIndex;
@@ -92,11 +98,6 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
         });
 
         if (navigator.vibrate) navigator.vibrate(50);
-        if(quizContent?.mcqs[qIndex].correctAnswerIndex === aIndex) {
-            playCorrect();
-        } else {
-            playIncorrect();
-        }
     };
 
      const handleOpenAnswerChange = (qIndex: number, value: string) => {
@@ -124,44 +125,17 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
             quizContent.mcqs.forEach((mcq, index) => {
                 if (mcq.correctAnswerIndex === mcqAnswers[index]) {
                     mcqCorrectCount++;
+                    playCorrect();
+                } else {
+                    playIncorrect();
                 }
             });
 
             const openAnswerCorrectCount = parsedEvaluations.filter(ev => ev && ev.verdict.toLowerCase() === 'correct').length;
             
-            let xpToEarn = mcqCorrectCount * XP_VALUES.READING_MCQ_CORRECT + openAnswerCorrectCount * XP_VALUES.READING_OPEN_CORRECT;
-
-            const addXpResult = addXpAndLog({
-                type: 'reading',
-                xp: xpToEarn,
-                details: {
-                    topic: selectedTopic,
-                    level: selectedLevel,
-                    mcqScore: mcqCorrectCount,
-                    mcqTotal: quizContent.mcqs.length,
-                    openCorrect: openAnswerCorrectCount,
-                    openTotal: quizContent.openQuestions.length,
-                }
-            });
-            setCompletionData(addXpResult);
-            if (addXpResult.leveledUp) {
-                onLevelUp(addXpResult.newLevel);
-            }
+            setScore({ mcqCorrect: mcqCorrectCount, openCorrect: openAnswerCorrectCount });
+            setQuizState('results');
             
-            const historyItem: ReadingHistoryItem = {
-                id: Date.now().toString(),
-                date: new Date().toISOString(),
-                topic: selectedTopic,
-                level: selectedLevel,
-                content: quizContent,
-                userMcqAnswers: mcqAnswers,
-                userOpenAnswers: openAnswers,
-                evaluations: parsedEvaluations,
-            };
-            addReadingHistory(historyItem);
-
-            setQuizState('finished');
-            playSuccess();
         } catch (e) {
             console.error(e);
             setError('回答の評価に失敗しました。もう一度お試しください。');
@@ -169,6 +143,43 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
         }
     };
     
+    const handleFinishQuiz = () => {
+        if (!quizContent || !score) return;
+
+        let xpToEarn = score.mcqCorrect * XP_VALUES.READING_MCQ_CORRECT + score.openCorrect * XP_VALUES.READING_OPEN_CORRECT;
+        const addXpResult = addXpAndLog({
+            type: 'reading',
+            xp: xpToEarn,
+            details: {
+                topic: selectedTopic,
+                level: selectedLevel,
+                mcqScore: score.mcqCorrect,
+                mcqTotal: quizContent.mcqs.length,
+                openCorrect: score.openCorrect,
+                openTotal: quizContent.openQuestions.length,
+            }
+        });
+        setCompletionData(addXpResult);
+        if (addXpResult.leveledUp) {
+            onLevelUp(addXpResult.newLevel);
+        }
+        
+        const historyItem: ReadingHistoryItem = {
+            id: Date.now().toString(),
+            date: new Date().toISOString(),
+            topic: selectedTopic,
+            level: selectedLevel,
+            content: quizContent,
+            userMcqAnswers: mcqAnswers,
+            userOpenAnswers: openAnswers,
+            evaluations: evaluations,
+        };
+        addReadingHistory(historyItem);
+
+        setQuizState('finished');
+        playSuccess();
+    };
+
     const allQuestionsAnswered = mcqAnswers.every(a => a !== null) && openAnswers.every(a => a.trim() !== '');
     const isSubmittable = (quizContent?.openQuestions.length ?? 0) > 0 ? allQuestionsAnswered : mcqAnswers.every(a => a !== null);
     
@@ -188,6 +199,57 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
     
     if (quizState === 'loading') return <div className="h-full flex items-center justify-center"><LoadingSpinner text="AIがクイズを作成中です..." /></div>;
     if (quizState === 'error') return <div className="text-center text-red-400">{error} <button onClick={() => setQuizState('selection')} className="ml-2 px-4 py-2 bg-indigo-600 rounded">戻る</button></div>;
+    if (quizState === 'evaluating') return <div className="h-full flex items-center justify-center"><LoadingSpinner text="AIが回答を評価中です..." /></div>;
+    
+
+    if (quizState === 'results' && quizContent && score) {
+        return (
+            <div className="space-y-8 animate-fade-in">
+                <div className="text-center">
+                    <h2 className="text-3xl font-bold text-cyan-300">結果</h2>
+                    <p className="text-slate-300">MCQ: {score.mcqCorrect}/{quizContent.mcqs.length} | 記述: {score.openCorrect}/{quizContent.openQuestions.length}</p>
+                </div>
+                <div className="space-y-6 max-h-[60vh] overflow-y-auto pr-2">
+                    {quizContent.mcqs.length > 0 && (
+                        <section>
+                            <h3 className="text-xl font-semibold text-cyan-300 mb-4">選択問題</h3>
+                            {quizContent.mcqs.map((mcq, qIndex) => {
+                                const userAnswerIndex = mcqAnswers[qIndex];
+                                const isCorrect = mcq.correctAnswerIndex === userAnswerIndex;
+                                return (
+                                <div key={qIndex} className={`p-4 rounded-lg border-l-4 ${isCorrect ? 'bg-green-900/30 border-green-500' : 'bg-red-900/30 border-red-500'}`}>
+                                    <p className="font-semibold mb-3 text-slate-200">{qIndex + 1}. {mcq.question}</p>
+                                    <p>あなたの回答: <span className="font-medium">{userAnswerIndex !== null ? mcq.options[userAnswerIndex] : '未回答'}</span> {isCorrect ? <CheckIcon className="inline w-5 h-5 text-green-400"/> : <XIcon className="inline w-5 h-5 text-red-400"/>}</p>
+                                    {!isCorrect && <p className="mt-1">正解: <span className="font-medium">{mcq.options[mcq.correctAnswerIndex]}</span></p>}
+                                </div>
+                                )
+                            })}
+                        </section>
+                    )}
+                    {quizContent.openQuestions.length > 0 && (
+                        <section>
+                             <h3 className="text-xl font-semibold text-cyan-300 mb-4">記述問題</h3>
+                              {quizContent.openQuestions.map((oq, qIndex) => (
+                                <div key={qIndex} className="p-4 rounded-lg bg-slate-800/50 mb-4">
+                                    <p className="font-semibold mb-2 text-slate-200">{qIndex + 1}. {oq.question}</p>
+                                    <p className="text-slate-300 italic mb-3">あなたの回答: "{openAnswers[qIndex]}"</p>
+                                    {evaluations[qIndex] && (
+                                         <div className="mt-2 pt-2 border-t border-slate-700">
+                                            <p className={`font-bold text-lg ${evaluations[qIndex]!.verdict.toLowerCase() === 'correct' ? 'text-green-400' : 'text-yellow-400'}`}>{evaluations[qIndex]!.verdict}</p>
+                                            <p className="text-slate-400 text-sm">{evaluations[qIndex]!.explanation}</p>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </section>
+                    )}
+                </div>
+                <button onClick={handleFinishQuiz} className="mt-6 px-6 py-3 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-transform transform hover:scale-105">
+                    完了してXPを獲得
+                </button>
+            </div>
+        )
+    }
 
     if (quizState === 'finished') {
         return (
@@ -216,7 +278,8 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
     return (
         <div className="space-y-8">
             <div className="flex justify-end">
-                <button onClick={() => setQuizState('selection')} disabled={quizState === 'evaluating'} className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white font-bold rounded-lg transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed">
+                {/* FIX: Removed redundant disabled check. This view is not rendered during evaluation. */}
+                <button onClick={() => setQuizState('selection')} className="px-4 py-2 bg-slate-600 hover:bg-slate-700 text-white font-bold rounded-lg transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed">
                     レベル選択に戻る
                 </button>
             </div>
@@ -238,7 +301,7 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
                                             {mcq.options.map((option, aIndex) => {
                                                 const isSelected = mcqAnswers[qIndex] === aIndex;
                                                 return (
-                                                    <button key={aIndex} onClick={() => handleMcqAnswer(qIndex, aIndex)} disabled={mcqAnswers[qIndex] !== null} className={`p-3 rounded-lg text-left transition-colors duration-200 ${isSelected ? 'bg-indigo-500 text-white' : 'bg-slate-700 hover:bg-slate-600'}`}>
+                                                    <button key={aIndex} onClick={() => handleMcqAnswer(qIndex, aIndex)} className={`p-3 rounded-lg text-left transition-colors duration-200 ${isSelected ? 'bg-indigo-500 text-white ring-2 ring-indigo-300' : 'bg-slate-700 hover:bg-slate-600'}`}>
                                                         {option}
                                                     </button>
                                                 );
@@ -263,7 +326,7 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
                                             rows={4}
                                             className="w-full p-3 bg-slate-700 rounded-md border border-slate-600 focus:ring-2 focus:ring-indigo-500 focus:outline-none disabled:bg-slate-700/50"
                                             placeholder="ここに回答を入力してください..."
-                                            disabled={quizState === 'evaluating'}
+                                            // FIX: Removed redundant disabled check. This view is not rendered during evaluation.
                                         />
                                     </div>
                                 ))}
@@ -271,8 +334,14 @@ const ReadingComprehension: React.FC<ReadingComprehensionProps> = ({ onLevelUp }
                          </section>
                     )}
 
-                    <button onClick={handleSubmit} disabled={!isSubmittable || quizState === 'evaluating'} className="mt-4 px-6 py-2 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-colors disabled:bg-slate-600 disabled:cursor-not-allowed">
-                        {quizState === 'evaluating' ? '評価中...' : '提出して終了'}
+                    <button
+                        onClick={handleSubmit}
+                        // FIX: Removed redundant check for 'evaluating' state, as it's unreachable here and causes a type error.
+                        disabled={!isSubmittable}
+                        className="mt-4 px-6 py-3 w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg transition-transform transform hover:scale-105 disabled:bg-slate-600 disabled:cursor-not-allowed"
+                    >
+                        {/* FIX: Removed redundant check for 'evaluating' state. */}
+                        提出して採点
                     </button>
                 </div>
             )}

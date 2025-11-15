@@ -62,7 +62,7 @@ const App: React.FC = () => {
         }`}
       >
         {icon}
-        <span className="text-xs sm:text-base font-medium hidden sm:block">{children}</span>
+        <span className="text-xs sm:text-base font-medium">{children}</span>
       </button>
     );
   }, []);
